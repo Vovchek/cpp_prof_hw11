@@ -108,37 +108,46 @@ cluster_t do_shuffle(cluster_t& m_cluster, size_t R) {
                       [](auto& s, auto& ptr) { return s + ptr->size(); });
   const auto r_size = total_lines / R;
 
-  //
-  int dupes{0};
-
-  std::string empty_string {""}, &last_moved = empty_string;
+  std::string empty_string{""}, *last_moved = &empty_string;
   for (auto i_line = 0; i_line < total_lines; ++i_line) {
     auto r_sn = std::min(i_line / r_size, R - 1);  // r-worker serial number
     auto it_it_min =
         std::min_element(m_it.begin(), m_it.end(),
                          [](auto& a, auto& b) { return *a.first < *b.first; });
     // store minimal string eliminating duplicates
-    if(last_moved != (it_it_min->first)->first) {
-        res[r_sn]->emplace_back(std::move(*(it_it_min->first)));
-        last_moved = res[r_sn]->back().first;
-    } else {
-        std::cout << ++dupes << ":" << last_moved << '\n'; 
+    if (*last_moved != (it_it_min->first)->first) {  // not a duplicate?
+      if (!res[r_sn]->size()) {
+        // 1) add last line from previous container for comparision
+        res[r_sn]->emplace_back(item_t{*last_moved, 1});
+        if (r_sn) {
+          // 2) add first line from this container to previous for comparision
+          res[r_sn - 1]->emplace_back(*(it_it_min->first));
+        }
+      }
+      res[r_sn]->emplace_back(std::move(*(it_it_min->first)));
+      last_moved = &res[r_sn]->back().first;
     }
-    auto m = std::distance(m_it.begin(), it_it_min);  // # m-worker donating line
+    auto m =
+        std::distance(m_it.begin(), it_it_min);  // # m-worker donating line
 
-    if (++(m_it[m].first) == m_it[m].second) {  // end of m-worker, stop iterating it
+    if (++(m_it[m].first) ==
+        m_it[m].second) {  // end of m-worker, stop iterating it
       m_it.erase(it_it_min);
     }
   }
+  // add empty string to the end of last comtainer 'caus it will be dropped by
+  // reducer
+  res[R - 1]->emplace_back(item_t{empty_string, 1});
 
   return res;
 }
 
 void reducer(map_t& r, int id = 0) {
-  if (r.size() < 1)
+// note: first and last lines will be dropped - they are either "" or duplicates
+// added just to compare with previous/subsequent lines
+  if (r.size() < 3) // nothing to do
     return;
-  
-  
+
   auto prefix_size = [](std::string& s1, std::string& s2) -> size_t {
     auto max_len = std::min(s1.size(), s2.size());
     for (size_t len = 0; len < max_len; ++len) {
@@ -151,20 +160,13 @@ void reducer(map_t& r, int id = 0) {
   std::string fn{"file_" + std::to_string(id) + ".txt"};
   std::ofstream f{fn};
 
-  if (r.size() < 2) {
-    f << r[0].first << " " << r[0].second << '\n';
-    return;
-  }
-
   auto pref_to_next = prefix_size(r[0].first, r[1].first);
   r[0].second = std::min(pref_to_next + 1, r[0].first.size());
-  f << r[0].first << " " << r[0].second << '\n';
-  auto pref_to_prev{pref_to_next};
+  // drop first line as it is a duplicate or empty line
 
-  for (size_t i = 1; i < r.size(); ++i) {
-    pref_to_prev = pref_to_next;
-    if (i < r.size() - 1)
-      pref_to_next = prefix_size(r[i].first, r[i + 1].first);
+  for (size_t i = 1; i < r.size() - 1; ++i) {  // drop last line
+    auto pref_to_prev = pref_to_next;
+    pref_to_next = prefix_size(r[i].first, r[i + 1].first);
     r[i].second =
         std::min(r[i].first.size(), std::max(pref_to_prev, pref_to_next) + 1);
     f << r[i].first << " " << r[i].second << '\n';
@@ -172,7 +174,7 @@ void reducer(map_t& r, int id = 0) {
 }
 
 void do_reduce(cluster_t& r_cluster) {
-  //const auto R = r_cluster.size();
+  // const auto R = r_cluster.size();
   std::vector<std::future<void>> reduce_tasks;
   int id{0};
   for (auto& r : r_cluster) {
@@ -191,14 +193,14 @@ void map_reduce(const char* file, size_t M, size_t R) {
   auto r_cluster = do_shuffle(m_cluster, R);
   do_reduce(r_cluster);
 
-/*
-  auto count{0};
-  for (auto& wrk : r_cluster) {
-    for (auto& [s, nc] : *wrk) {
-      std::cout << (count++) << ":" << s << ":" << nc << std::endl;
+  /*
+    auto count{0};
+    for (auto& wrk : r_cluster) {
+      for (auto& [s, nc] : *wrk) {
+        std::cout << (count++) << ":" << s << ":" << nc << std::endl;
+      }
     }
-  }
-  */
+    */
 }
 
 int main(int argc, char* argv[]) {
