@@ -201,7 +201,7 @@ void map_reduce(const char* file, size_t M, size_t R) {
   */
 }
 
-main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) {
   std::cout << fs::current_path() << std::endl;
 
   if (argc < 4) {
@@ -214,4 +214,6 @@ main(int argc, char* argv[]) {
     std::cerr << e.what() << std::endl;
     return EXIT_FAILURE;
   }
+
+  return EXIT_SUCCESS;
 }
